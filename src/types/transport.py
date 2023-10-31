@@ -4,17 +4,19 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from src.enums.transport import TransportTypes
+
 
 class BaseTransport(BaseModel):
     canBeRented: bool
     model: str
     color: str
     identifier: str
-    description: Optional[str]
-    latitude: int
-    longitude: int
-    minutePrice: Optional[int]
-    dayPrice: Optional[int]
+    description: Optional[str] = None
+    latitude: float
+    longitude: float
+    minutePrice: Optional[float] = None
+    dayPrice: Optional[float] = None
 
     def get_owner_id(self) -> Optional[int]:
         return self.__dict__.get("ownerId", None)
@@ -31,7 +33,7 @@ class BaseTransport(BaseModel):
     def get_transport_type(self) -> Optional[int]:
         return self.__dict__.get("transportType", None)
 
-    def get__transport_type_is_exist(self) -> bool:
+    def get_transport_type_is_exist(self) -> bool:
         return self.get_transport_type() is not None
 
 
@@ -44,7 +46,11 @@ class TransportWithId(BaseModel):
 
 
 class TransportWithType(BaseModel):
-    transportType: str
+    transportType: TransportTypes
+
+
+class UserWriteTransport(BaseTransport, TransportWithType):
+    pass
 
 
 class WriteTransport(BaseTransport, TransportWithOwner, TransportWithType):

@@ -39,16 +39,3 @@ class StandartUser(BaseUser):
 
 class StandartUserWithId(StandartUser):
     id: int
-
-
-class UserWithActive(StandartUserWithId):
-    active: bool
-
-    def get_object_without_active_status(self) -> StandartUserWithId:
-        return StandartUserWithId(
-            username=self.username,
-            password=self.password,
-            isAdmin=self.isAdmin,
-            balance=self.balance,
-            id=self.id
-        )

@@ -3,12 +3,28 @@
 from typing import Coroutine, Any, Optional, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import insert, select, update, delete
+from sqlalchemy import select, update, delete, func, Select
+from sqlalchemy.dialects.postgresql import insert
 
-from src.database.structure.model import User, Transport
+from src.database.structure.model import User, Transport, UnactiveToken, Rent
 from src.types.user import BaseUser
 from src.types.transport import WriteTransport, BaseTransport
+from src.types.rent import StandartRent
 from src.encryption.password import get_password_hash
+from src.enums.transport import TransportTypesWithAll
+
+
+def add_unactive_token(token: str, session: AsyncSession) -> Coroutine[Any, Any, Any]:
+    stmt = insert(UnactiveToken).values(token=token)
+    stmt = stmt.on_conflict_do_nothing()
+
+    return session.execute(stmt)
+
+
+def get_unactive_token(token: str, session: AsyncSession) -> Coroutine[Any, Any, UnactiveToken | None]:
+    stmt = select(UnactiveToken).where(UnactiveToken.token == token)
+
+    return session.scalar(stmt)
 
 
 def add_new_user(user: BaseUser, session: AsyncSession) -> Coroutine[Any, Any, User]:
@@ -44,7 +60,6 @@ def get_user_by_name(user_name: str, session: AsyncSession) -> Coroutine[Any, An
 def update_user(
         user: BaseUser,
         session: AsyncSession,
-        active: Optional[bool] = None,
         hash_password: bool = True,
         user_id: Optional[int] = None
 ) -> Coroutine[Any, Any, User]:
@@ -72,15 +87,12 @@ def update_user(
     if user.get_admin_status_is_exists():
         stmt = stmt.values(isAdmin=is_admin)
 
-    if active is not None:
-        stmt = stmt.values(active=active)
-
     stmt = stmt.returning(User)
 
     return session.scalar(stmt)
 
 
-def delete_user(user_id, session: AsyncSession):
+def delete_user(user_id, session: AsyncSession) -> Any:
     stmt = delete(User).where(User.id == user_id)
 
     return session.execute(stmt)
@@ -91,6 +103,22 @@ async def get_all_users(offset: int, limit: int, session: AsyncSession) -> Seque
 
     result = await session.scalars(stmt)
 
+    return result.all()
+
+
+async def get_all_transports(
+        offset: int,
+        limit: int,
+        transport_type: TransportTypesWithAll,
+        session: AsyncSession
+) -> Sequence[Transport]:
+
+    stmt = select(Transport).offset(offset).limit(limit)
+
+    if transport_type != TransportTypesWithAll.ALL:
+        stmt = stmt.where(Transport.transportType == transport_type)
+
+    result = await session.scalars(stmt)
     return result.all()
 
 
@@ -146,7 +174,7 @@ def edit_transport(
     if transport.get_owner_id_is_exist():
         stmt = stmt.values(ownerId=transport.get_owner_id())
 
-    if transport.get__transport_type_is_exist():
+    if transport.get_transport_type_is_exist():
         stmt = stmt.values(transportType=transport.get_transport_type())
 
     stmt = stmt.returning(Transport)
@@ -154,7 +182,125 @@ def edit_transport(
     return session.scalar(stmt)
 
 
-def delete_transport_by_id(transport_id: int, session: AsyncSession):
+def delete_transport_by_id(transport_id: int, session: AsyncSession) -> Any:
     stmt = delete(Transport).where(Transport.id == transport_id)
 
+    return session.execute(stmt)
+
+
+def get_id_of_free_transport() -> Select:
+    all_busy_transports_id = select(Rent.transportId).where(Rent.timeEnd.is_(None))
+    all_finish_transport = Transport.id.not_in(all_busy_transports_id)
+
+    can_be_ranted = Transport.canBeRented.is_(True)
+
+    stmt = select(Transport.id).where(
+        all_finish_transport,
+        can_be_ranted
+    )
+
+    return stmt
+
+
+async def get_transport_by_radius(
+        lat: float,
+        long: float,
+        radius: float,
+        transport_type: TransportTypesWithAll,
+        session: AsyncSession
+) -> Sequence[Transport]:
+    free_transport_stmt = get_id_of_free_transport()
+
+    stmt = select(Transport)
+
+    left = func.pow(Transport.latitude - lat, 2)
+    right = func.pow(Transport.longitude - long, 2)
+    check = left + right <= radius ** 2
+
+    stmt = stmt.where(
+        check,
+        Transport.id.in_(free_transport_stmt)
+    )
+
+    if transport_type != TransportTypesWithAll.ALL:
+        stmt = stmt.where(Transport.transportType == transport_type)
+        
+    result = await session.scalars(stmt)
+
+    return result.all()
+
+
+async def get_transport_is_busy(tranport_id: int, session: AsyncSession) -> bool:
+    free_transport_stmt = get_id_of_free_transport()
+
+    result = await session.scalars(free_transport_stmt)
+
+    return tranport_id not in result.all()
+
+
+def get_rent_by_id(rent_id: int, session: AsyncSession) -> Coroutine[Any, Any, Rent]:
+    stmt = select(Rent).where(Rent.id == rent_id)
+
     return session.scalar(stmt)
+
+
+async def get_rents_by_user_id(user_id: int, session: AsyncSession) -> Sequence[Rent]:
+    stmt = select(Rent).where(Rent.userId == user_id)
+
+    result = await session.scalars(stmt)
+
+    return result.all()
+
+
+async def get_rents_by_transport_id(transport_id: int, session: AsyncSession) -> Sequence[Rent]:
+    stmt = select(Rent).where(Rent.transportId == transport_id)
+
+    result = await session.scalars(stmt)
+
+    return result.all()
+
+
+def add_rent(rent: StandartRent, session: AsyncSession) -> Coroutine[Any, Any, Rent]:
+    stmt = insert(Rent).values(
+        transportId=rent.transportId,
+        userId=rent.userId,
+        timeStart=rent.timeStart,
+        timeEnd=rent.timeEnd,
+        priceOfUnit=rent.priceOfUnit,
+        priceType=rent.priceType,
+        finalPrice=rent.finalPrice
+    )
+
+    stmt = stmt.returning(Rent)
+
+    return session.scalar(stmt)
+
+
+def edit_rent(
+        rent: StandartRent,
+        session: AsyncSession,
+        rent_id: Optional[int] = None
+) -> Coroutine[Any, Any, Rent]:
+
+    stmt = update(Rent)
+    stmt = stmt.values(
+        transportId=rent.transportId,
+        userId=rent.userId,
+        timeStart=rent.timeStart,
+        timeEnd=rent.timeEnd,
+        priceOfUnit=rent.priceOfUnit,
+        priceType=rent.priceType,
+        finalPrice=rent.finalPrice
+    )
+
+    stmt = stmt.where(Rent.id == rent_id)
+
+    stmt = stmt.returning(Rent)
+
+    return session.scalar(stmt)
+
+
+def delete_rent_by_id(rent_id: int, session: AsyncSession) -> Any:
+    stmt = delete(Rent).where(Rent.id == rent_id)
+
+    return session.execute(stmt)

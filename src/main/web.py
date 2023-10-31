@@ -2,13 +2,13 @@
 
 from fastapi import FastAPI
 
-from .routers import init_routers
+from src.main.routers import init_routers
+from src.routers.start import init_models
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Simbir.GO", version="0.0.2a", description="Like the yandex taxi but..", on_startup=)
+    app = FastAPI(title="Simbir.GO", version="0.1.0", description="Like the yandex.GO but..", lifespan=init_models)
 
     init_routers(app)
-    app.
 
     return app

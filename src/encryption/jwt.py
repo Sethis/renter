@@ -9,10 +9,10 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
 from src.types.token import TokenData
-from src.exceptions.user import user_is_unauthorized, inactive_user
+from src.exceptions.user import user_is_unauthorized, inactive_user, forrbiden_result
 from src.database.actions.logic import Logic
 from src.di.db import get_logic
-from src.types.user import UserWithActive
+from src.types.user import StandartUserWithId
 
 # to get a string like this run:
 # openssl rand -hex 32
@@ -42,7 +42,7 @@ def create_access_token(data: dict, expires_delta: timedelta = EXPIRES_DELTA) ->
 async def get_current_user(
         token: Annotated[str, Depends(oauth2_scheme)],
         db: Annotated[Logic, Depends(get_logic)]
-) -> UserWithActive:
+) -> StandartUserWithId:
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -62,14 +62,26 @@ async def get_current_user(
 
     if user is None:
         raise user_is_unauthorized
+
     return user
 
 
 async def get_current_active_user(
-    current_user: Annotated[UserWithActive, Depends(get_current_user)]
-) -> UserWithActive:
+    current_user: Annotated[StandartUserWithId, Depends(get_current_user)],
+    db: Annotated[Logic, Depends(get_logic)],
+    token: Annotated[str, Depends(oauth2_scheme)]
+) -> StandartUserWithId:
 
-    if not current_user.active:
+    if not await db.check_token_is_active(token):
         raise inactive_user
+
+    return current_user
+
+
+async def get_current_user_as_admin(
+    current_user: Annotated[StandartUserWithId, Depends(get_current_user)]
+) -> StandartUserWithId:
+    if not current_user.isAdmin:
+        raise forrbiden_result
 
     return current_user

@@ -5,8 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from fastapi.security import OAuth2PasswordRequestForm
 
-from src.di.shortcuts import database, current_user
-from src.types.user import StandartUserWithId, PlainUser
+from src.di.shortcuts import database, current_user, token
+from src.types.user import StandartUser, PlainUser
 from src.exceptions.user import username_is_occupied, user_is_unauthorized
 from src.encryption.password import verify_password
 from src.encryption.jwt import create_access_token
@@ -16,8 +16,8 @@ account_controller_router = APIRouter(tags=["AccountController"])
 
 
 @account_controller_router.get("/api/Account/Me")
-async def insert_user(user: current_user) -> StandartUserWithId:
-    return user.get_object_without_active_status()
+async def insert_user(user: current_user) -> StandartUser:
+    return user
 
 
 @account_controller_router.post("/api/Account/SignIn")
@@ -40,13 +40,13 @@ async def auth_user(
         data={"sub": form_data.username}
     )
 
-    await db.update_user(db_user, active=True, hash_password=False)
+    await db.update_user(db_user, hash_password=False)
 
     return Token(access_token=access_token, token_type="bearer")
 
 
 @account_controller_router.post("/api/Account/SignUp")
-async def register_new_user(user: PlainUser, db: database) -> StandartUserWithId:
+async def register_new_user(user: PlainUser, db: database) -> StandartUser:
     if await db.check_username_is_exists(user.username):
         raise username_is_occupied
 
@@ -54,15 +54,21 @@ async def register_new_user(user: PlainUser, db: database) -> StandartUserWithId
 
 
 @account_controller_router.post("/api/Account/SignOut")
-async def sign_out_user(db: database, user: current_user) -> dict[str, bool]:
-    await db.update_user(user, active=False, hash_password=False)
+async def sign_out_user(
+        db: database,
+        token_: token
+) -> dict[str, bool]:
+    await db.add_unactive_token(token_)
 
     return {"ok": True}
 
 
 @account_controller_router.put("/api/Account/Update")
-async def update_user(user: PlainUser, db: database, curr_user: current_user) -> StandartUserWithId:
+async def update_user(user: PlainUser, db: database, curr_user: current_user, token_: token) -> StandartUser:
     if await db.check_username_is_exists(user.username, editing_user_id=curr_user.id):
         raise username_is_occupied
 
-    return await db.update_user(user, user_id=curr_user.id, active=False)
+    await db.add_unactive_token(token_)
+
+    return await db.update_user(user, user_id=curr_user.id)
+
